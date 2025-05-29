@@ -24,6 +24,8 @@ const char supported_characters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:;?=-
 void print_help() {
     printf("Morse Code Encoder/Decoder\n");
     printf("Usage: morse [OPTIONS] [FILE]\n");
+    printf("If you want to type the text directly in the console do:");
+    printf("echo exampleText | morse [OPTIONS] [FILE]\n");
     printf("Options:\n");
     printf("  -h, --help             Display this help message.\n");
     printf("  --programmer-info      Display information about the programmer.\n");
@@ -46,6 +48,12 @@ void encode_to_morse(const char *text, char *morse_result) {
     int index;
     for (; *text; ++text) {
         c = *text;
+        
+        // Ignore \n and \r
+        if (c == '\n' || c == '\r') {
+            continue;
+        }
+        
         if (isalpha(c)) {
             c = toupper(c);
             strcat(morse_result, morse[c - 'A']);
@@ -53,8 +61,8 @@ void encode_to_morse(const char *text, char *morse_result) {
             strcat(morse_result, morse[c - '0' + 26]);
         } else {
             const char* ptr = strchr(supported_characters, c);
-            index = (int)(ptr - supported_characters);
             if (ptr) {
+                index = (int)(ptr - supported_characters);
                 strcat(morse_result, morse[index]);
             } else if (c == ' ') {
                 strcat(morse_result, "   ");
@@ -73,14 +81,19 @@ char decode_morse(const char *morse_letter) {
             return supported_characters[i];
         }
     }
-    return '*'; // Falls kein Match gefunden wird
+    return '*'; // if no match 
 }
 
 void decode_from_morse(const char *morse_code, char *text_result) {
     char buffer[10];
     int buffer_index = 0;
-
+    
     for (; *morse_code; ++morse_code) {
+        // Ignore \n and \r
+        if (*morse_code == '\n' || *morse_code == '\r') {
+            continue;
+        }
+        
         if (*morse_code != ' ') {
             buffer[buffer_index++] = *morse_code;
         } else {
@@ -92,11 +105,12 @@ void decode_from_morse(const char *morse_code, char *text_result) {
             }
             if (*(morse_code+1) == ' ' && *(morse_code+2) == ' ') {
                 strcat(text_result, " ");
-                morse_code += 2; // Überspringen von zusätzlichen Leerzeichen
+                morse_code += 2; 
             }
         }
     }
-
+    
+    // use last morse code if existing
     if (buffer_index != 0) {
         buffer[buffer_index] = '\0';
         char letter = decode_morse(buffer);
@@ -104,23 +118,58 @@ void decode_from_morse(const char *morse_code, char *text_result) {
     }
 }
 
-void process_input(FILE *input, char *text_result, int encode) {
-    char line[512];
-    while (fgets(line, sizeof(line), input)) {
-        // Entweder kodieren oder dekodieren
-        if (encode) {
-            encode_to_morse(line, text_result);
-        } else {
-            decode_from_morse(line, text_result);
-        }
+// read input into string
+char* read_entire_input(FILE *input) {
+    char *content = NULL;
+    size_t capacity = 1024;
+    size_t length = 0;
+    
+    content = malloc(capacity);
+    if (!content) {
+        return NULL;
     }
+    
+    int c;
+    while ((c = fgetc(input)) != EOF) {
+        if (length >= capacity - 1) {
+            capacity *= 2;
+            char *new_content = realloc(content, capacity);
+            if (!new_content) {
+                free(content);
+                return NULL;
+            }
+            content = new_content;
+        }
+        content[length++] = c;
+    }
+    
+    content[length] = '\0';
+    return content;
+}
+
+void process_input(FILE *input, char *text_result, int encode) {
+    // read entire input
+    char *input_content = read_entire_input(input);
+    if (!input_content) {
+        fprintf(stderr, "Error: Couldn't read input.\n");
+        return;
+    }
+    
+    //process entire string
+    if (encode) {
+        encode_to_morse(input_content, text_result);
+    } else {
+        decode_from_morse(input_content, text_result);
+    }
+    
+    free(input_content);
 }
 
 int main(int argc, char *argv[]) {
     int option_index = 0, encode = 0, decode = 0;
     char *output_file = NULL;
     char *input_file = NULL;
-
+    
     static struct option long_options[] = {
         {"help", no_argument, 0, 'h'},
         {"programmer-info", no_argument, 0, 0},
@@ -129,7 +178,7 @@ int main(int argc, char *argv[]) {
         {"out", required_argument, 0, 'o'},
         {0, 0, 0, 0}
     };
-
+    
     int c;
     while ((c = getopt_long(argc, argv, "hedo:", long_options, &option_index)) != -1) {
         switch (c) {
@@ -156,41 +205,47 @@ int main(int argc, char *argv[]) {
                 return 1;
         }
     }
-
+    
     if (encode && decode) {
-        fprintf(stderr, "Fehler: Optionen --encode und --decode können nicht gleichzeitig verwendet werden.\n");
+        fprintf(stderr, "Error: Optionen --encode and --decode can't be used simultaneously.\n");
         return 1;
     }
-
+    
     if (!encode && !decode) {
         encode = 1;
     }
-
-    FILE *input = stdin;  // Standardmäßig von stdin lesen
+    
+    FILE *input = stdin;  
     if (optind < argc) {
         input_file = argv[optind];
         input = fopen(input_file, "r");
         if (!input) {
-            fprintf(stderr, "Fehler: Datei %s kann nicht geöffnet werden.\n", input_file);
+            fprintf(stderr, "Error: File %s could not be opened.\n", input_file);
             return 1;
         }
     }
-
-    char result[2048] = "";  // Platz für das Ergebnis
+    
+    char result[8192] = "";
     process_input(input, result, encode);
-    fclose(input);
-
-    FILE *output = stdout;  // Standardmäßig auf stdout ausgeben
+    
+    if (input != stdin) {
+        fclose(input);
+    }
+    
+    FILE *output = stdout;
     if (output_file) {
         output = fopen(output_file, "w");
         if (!output) {
-            fprintf(stderr, "Fehler: Ausgabe in die Datei %s fehlgeschlagen.\n", output_file);
+            fprintf(stderr, "Error: output into file %s has failed.\n", output_file);
             return 1;
         }
     }
-
+    
     fprintf(output, "%s", result);
-    fclose(output);
-
+    
+    if (output != stdout) {
+        fclose(output);
+    }
+    
     return 0;
 }
